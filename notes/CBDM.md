@@ -64,4 +64,126 @@ p_{\theta}(x_{t-1}\mid x_t)\; \big\|\; p_{\theta}(x_{t-1}\mid x_t,y')
 $$
 
 ---
+## 两个Loss Term：CBDM 中 `L_r` 和 `L_rc` 的区别与意义
+
+- Calculate the first regularization term
+
+
+
+- Calculate the regularization commitment term
+
+### 1. 两个 Loss 的形式
+
+记
+- \( a = \varepsilon_\theta(x_t^{(i)}, y^{(i)}) \)
+- \( b = \varepsilon_\theta(x_t^{(i)}, y'^{(i)}) \)
+
+忽略前面的系数 \(t\tau\)，两项分别是：
+
+#### 正则项 \(L_r\)
+
+\[
+L_r = \left\|\,\varepsilon_\theta(x_t^{(i)}, y^{(i)}) 
+      - \operatorname{sg}\big(\varepsilon_\theta(x_t^{(i)}, y'^{(i)})\big)\right\|^2
+  = \|a - \operatorname{sg}(b)\|^2
+\]
+
+> 对 **\(y'\) 那一支**（即 \(b\)）做了 `stop-gradient`。
+
+---
+
+#### 承诺项 \(L_{rc}\)
+
+\[
+L_{rc} = \left\|\operatorname{sg}\big(\varepsilon_\theta(x_t^{(i)}, y^{(i)})\big) 
+      - \varepsilon_\theta(x_t^{(i)}, y'^{(i)})\right\|^2
+  = \|\operatorname{sg}(a) - b\|^2
+\]
+
+> 对 **\(y\) 那一支**（即 \(a\)）做了 `stop-gradient`。
+
+---
+
+### 2. 梯度流向的区别
+
+### 对 \(L_r = \|a - \operatorname{sg}(b)\|^2\)
+
+- 对 \(a\)（真实条件 \(y\) 分支）有梯度：
+  \[
+  \frac{\partial L_r}{\partial a} \propto (a - \operatorname{sg}(b))
+  \]
+- 对 \(b\)（伪条件 \(y'\) 分支）**没有梯度**。
+
+👉 意味着：
+> 只更新 **真实条件 \(y\)** 这一支的输出，  
+> 让 \(a\) 向“冻结的” \(b\) 靠近；  
+> \(b\) 在这一项里只是一个固定的 target / 老师。
+
+---
+
+#### 对 \(L_{rc} = \|\operatorname{sg}(a) - b\|^2\)
+
+- 对 \(a\) 没有梯度。
+- 对 \(b\) 有梯度：
+  \[
+  \frac{\partial L_{rc}}{\partial b} \propto (b - \operatorname{sg}(a))
+  \]
+
+👉 意味着：
+> 只更新 **伪条件 \(y'\)** 这一支的输出，  
+> 让 \(b\) 向“冻结的” \(a\) 靠近；  
+> \(a\) 在这一项里是一个固定的 target / 老师。
+
+---
+
+### 3. 直觉上的意义
+
+把同一网络在不同条件下的输出视为两“塔”：
+
+### \(L_r\)：regularization term
+
+- 约束 **真实条件 \(y\) 分支** 的输出不要和 \(y'\) 分支差太远。
+- 因为 \(b\) 不反传梯度，\(b\) 可以看作相对稳定的“老师 / 参考”。
+- 直觉：
+  > 在保证基本扩散损失 \(L_{\text{DM}}\) 拟合噪声的前提下，  
+  > 再轻轻把 \(y\) 分支往 \(y'\) 分支的预测拉一拉，  
+  > 起到“**平滑/正则化条件依赖**”的作用。
+
+---
+
+#### \(L_{rc}\)：regularization **commitment** term
+
+- 强制 **伪条件 \(y'\) 分支** 不要随便乱跑，要向真实条件 \(y\) 分支对齐。
+- 类似 VQ-VAE 里的 “commitment loss”：学生必须“承诺”去贴近老师。
+- 直觉：
+  > 不仅要让 \(y\) 靠近 \(y'\)，  
+  > 也要强迫 \(y'\) 真正学到与 \(y\) 一致的表示，  
+  > 防止这个辅助分支学成一个无意义的、退化的表示。
+
+---
+
+#### 4. 为什么要两个一起用？
+
+如果只用对称的 \(\|a - b\|^2\) 且两边都反传梯度：
+
+- 为了减小这项损失，最简单的办法就是  
+  **两边一起塌缩成一个与条件无关的常数输出**。
+
+现在拆成带 `stop-gradient` 的两项 \(L_r + \gamma L_{rc}\)，再加上原始扩散损失：
+
+\[
+L_{\text{CBDM}} = L_{\text{DM}} + L_r + \gamma L_{rc}
+\]
+
+综合效果：
+
+1. \(L_{\text{DM}}\)：保证每个条件都要预测对噪声（防止完全忽略条件）。  
+2. \(L_r\)：正则真实条件分支，使 w.r.t. 条件的变化不过于剧烈。  
+3. \(L_{rc}\)：约束辅助分支必须对齐真实分支，防止它乱学、退化。
+
+> **最终：**  
+> 既缓解了不同条件输出之间的差异过大问题（更平滑、更稳定），  
+> 又避免了简单的条件坍缩解（输出与条件无关）。
+
+---
 
